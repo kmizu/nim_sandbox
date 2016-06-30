@@ -1,4 +1,5 @@
 import strutils
+import lists
 type
   Parser[T] = proc(input: string): Maybe[(T, string)]
   Maybe*[T] = object
@@ -11,6 +12,21 @@ proc Just*[T](value: T): Maybe[T] =
 
 proc Nothing*[T]: Maybe[T] =
   result.hasValue = false
+
+proc repeat[T](body: Parser[T]): Parser[DoublyLinkedList[T]] =
+  (proc (input: string): Maybe[(DoublyLinkedList[T], string)] =
+    let list = initDoublyLinkedList[T]()
+    var rest = input
+    while true:
+      let xresult = body(rest)
+      if xresult.hasValue:
+        let (xvalue, xnext) = xresult.value
+        list.append(xvalue)
+        rest = xnext
+      else:
+        return Just(list)
+    nil
+  )
 
 proc `/`[T](lhs, rhs: Parser[T]): Parser[T] = 
   (proc (input: string): Maybe[(T, string)] = 
@@ -51,9 +67,20 @@ proc map[T, U](parser: Parser[T], f: (proc(value: T): U)): Parser[U] =
       let (xvalue, xnext) = xresult.value
       Just((f(xvalue), xnext))
     else:
-      Nothing[U]()
+      Nothing[(U, string)]()
   )
 
-let ab = s("A") + s("B")
+proc chainl[T](p: Parser[T], q: Parser[(proc(a: T, b: T): T)]): Parser[T] =
+  (p + (q + q).repeat()).map(proc(values) =
+    let (x, xs) = values
+    var a = x
+    for fb in xs:
+      let (f, b) = fb
+      a = f(a, b)
+    a)
 
-echo ab("AB")
+let ab: Parser[(string, string)] = (s("A") + s("B"))
+let x: Parser[string] = ab.map(proc(v: (string, string)): string =
+  let (v1, v2) = v
+  v1 & v2
+)
