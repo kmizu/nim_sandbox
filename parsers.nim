@@ -1,5 +1,7 @@
 import strutils
 import lists
+import re
+
 type
   Parser[T] = proc(input: string): Maybe[(T, string)]
   Maybe*[T] = object
@@ -13,9 +15,18 @@ proc Just*[T](value: T): Maybe[T] =
 proc Nothing*[T]: Maybe[T] =
   result.hasValue = false
 
+proc regex(regex: Regex): Parser[string] =
+  (proc (input: string): Maybe[(string, string)] =
+    let (first, last) = findBounds(input, regex)
+    if first == 0:
+      Just((input[0 .. last], input[(last + 1) .. input.len]))
+    else:
+      Nothing[(string, string)]()
+  )
+
 proc repeat[T](body: Parser[T]): Parser[DoublyLinkedList[T]] =
   (proc (input: string): Maybe[(DoublyLinkedList[T], string)] =
-    let list = initDoublyLinkedList[T]()
+    var list = initDoublyLinkedList[T]()
     var rest = input
     while true:
       let xresult = body(rest)
@@ -24,7 +35,7 @@ proc repeat[T](body: Parser[T]): Parser[DoublyLinkedList[T]] =
         list.append(xvalue)
         rest = xnext
       else:
-        return Just(list)
+        return Just((list, rest))
     nil
   )
 
@@ -70,8 +81,18 @@ proc map[T, U](parser: Parser[T], f: (proc(value: T): U)): Parser[U] =
       Nothing[(U, string)]()
   )
 
+proc flatMap[T, U](parser: Parser[T], f: (proc(value: T): Parser[U])): Parser[U] =
+  (proc (input: string): Maybe[(U, string)] = 
+    let xresult = parser(input)
+    if xresult.hasValue:
+      let (xvalue, xnext) = xresult.value
+      f(xvalue)(xnext)
+    else:
+      Nothing[(U, string)]()
+  )
+
 proc chainl[T](p: Parser[T], q: Parser[(proc(a: T, b: T): T)]): Parser[T] =
-  (p + (q + q).repeat()).map(proc(values) =
+  (p + (q + p).repeat()).map(proc(values: (T, DoublyLinkedList[((proc(a: int, b: int): int), T)])): T =
     let (x, xs) = values
     var a = x
     for fb in xs:
@@ -79,8 +100,37 @@ proc chainl[T](p: Parser[T], q: Parser[(proc(a: T, b: T): T)]): Parser[T] =
       a = f(a, b)
     a)
 
-let ab: Parser[(string, string)] = (s("A") + s("B"))
-let x: Parser[string] = ab.map(proc(v: (string, string)): string =
-  let (v1, v2) = v
-  v1 & v2
+proc A(): Parser[int]
+
+proc M(): Parser[int]
+
+proc P(): Parser[int]
+
+proc number(): Parser[int]
+
+proc E(): Parser[int] = A()
+
+proc A(): Parser[int] = M().chainl(
+  (s("+").map(proc(s: string): (proc(lhs: int, rhs: int): int) = 
+    (proc(lhs: int, rhs: int): int = lhs + rhs))) / 
+  (s("-").map(proc(_: string): (proc(lhs: int, rhs: int): int) = 
+    (proc(lhs: int, rhs: int): int = lhs - rhs)))
 )
+
+proc M(): Parser[int] = P().chainl(
+  (s("*").map(proc(s: string): (proc(lhs: int, rhs: int): int) = 
+    (proc(lhs: int, rhs: int): int = lhs * rhs))) / 
+  (s("/").map(proc(_: string): (proc(lhs: int, rhs: int): int) = 
+    (proc(lhs: int, rhs: int): int = lhs div rhs)))
+)
+
+proc P(): Parser[int] =
+  s("(").flatMap(proc(_: string): Parser[int] =
+    E().flatMap(proc(e: int): Parser[int] =
+      s(")").map(proc(_: string): int =
+        e))) / number()
+
+proc number(): Parser[int] = regex(re"[0-9]+").map(proc(n: string): int = 
+  parseInt(n))
+
+echo E()("(1+2)*(3+4)")
